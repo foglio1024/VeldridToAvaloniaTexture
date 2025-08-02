@@ -17,12 +17,7 @@
         <vm:MainWindowViewModel />
     </Design.DataContext>
     <Panel>
-        <controls:VeldridView MaxWidth="200" MaxHeight="200" />
-        <TextBlock
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Foreground="White"
-            Text="{Binding Greeting}" />
+        <controls:VeldridView />
 
     </Panel>
 </Window>

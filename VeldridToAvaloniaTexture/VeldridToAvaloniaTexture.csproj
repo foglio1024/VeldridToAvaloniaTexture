@@ -25,7 +25,11 @@
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
+    <!--<PackageReference Include="Bliss" Version="1.3.37" />-->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.1" />
-    <PackageReference Include="ppy.Veldrid" Version="4.9.66-g086790861c" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\source\Bliss\src\Bliss\Bliss.csproj" />
   </ItemGroup>
 </Project>

@@ -29,7 +29,7 @@ public class VeldridView : Control
     {
         _timer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(10),
-            DispatcherPriority.Default,
+            DispatcherPriority.Render,
             (_, _) => InvalidateVisual()
         );
     }
@@ -49,7 +49,7 @@ public class VeldridView : Control
 
         if (_isInitialized) return;
 
-        _renderer = new VeldridRenderer((int)Bounds.Width, (int)Bounds.Height);
+        _renderer = new VeldridRenderer((int)Bounds.Width, (int)Bounds.Height, this);
         _isInitialized = true;
     }
 

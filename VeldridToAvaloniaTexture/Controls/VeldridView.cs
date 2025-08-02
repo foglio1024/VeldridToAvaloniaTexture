@@ -25,10 +25,34 @@ public class VeldridView : Control
     private bool _isInitialized;
     private WriteableBitmap? _writeableBitmap;
 
+    public static readonly StyledProperty<float> FrameRateProperty =
+        AvaloniaProperty.Register<VeldridView, float>(nameof(FrameRate), 60f);
+
+    public float FrameRate
+    {
+        get => GetValue(FrameRateProperty);
+        set => SetValue(FrameRateProperty, value);
+    }
+
+    static VeldridView()
+    {
+        FrameRateProperty.Changed.AddClassHandler<VeldridView>(HandleFrameRateChanged);
+    }
+
+    private static void HandleFrameRateChanged(VeldridView sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        sender.OnFrameRateChanged();
+    }
+
+    private void OnFrameRateChanged()
+    {
+        _timer.Interval = TimeSpan.FromSeconds(1 / FrameRate);
+    }
+
     public VeldridView()
     {
         _timer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(10),
+            TimeSpan.FromSeconds(1 / FrameRate),
             DispatcherPriority.Render,
             (_, _) => InvalidateVisual()
         );

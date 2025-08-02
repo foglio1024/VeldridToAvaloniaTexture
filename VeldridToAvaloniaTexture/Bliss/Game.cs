@@ -39,18 +39,10 @@ namespace Bliss.Test;
 
 public class Game : Disposable
 {
-
     public static Game Instance { get; private set; }
     public GameSettings Settings { get; private set; }
-
-    //public IWindow MainWindow { get; private set; }
     public GraphicsDevice GraphicsDevice { get; private set; }
     public CommandList CommandList { get; private set; }
-
-    private double _fixedFrameRate;
-
-    private readonly double _fixedUpdateTimeStep;
-    private double _fixedUpdateTimer;
 
     public FullScreenRenderPass FullScreenRenderPass { get; private set; }
     public RenderTexture2D FullScreenTexture { get; private set; }
@@ -92,7 +84,16 @@ public class Game : Disposable
 
     private string _textInput;
 
-    Lock _frame = new Lock();
+    private Texture? _stagingTexture;
+    private readonly Control _host;
+    private SKBitmap? _skBitmap;
+
+    private double _fixedFrameRate;
+
+    private readonly double _fixedUpdateTimeStep;
+    private double _fixedUpdateTimer;
+
+    private readonly Lock _frameLock = new();
 
 
     public Game(GameSettings settings, Control host)
@@ -101,42 +102,12 @@ public class Game : Disposable
         this.Settings = settings;
         this._fixedUpdateTimeStep = settings.FixedTimeStep;
         _host = host;
-
-    }
-
-    public void Run()
-    {
-
-        Logger.Info("Start main loops...");
-        //while (this.MainWindow.Exists) {
-        Task.Run(async () =>
-        {
-            while (true)
-            {
-                //if (this.GetTargetFps() != 0 && Time.Timer.Elapsed.TotalSeconds <= this._fixedFrameRate)
-                //{
-                //    continue;
-                //}
-               
-                Tick();
-
-                Draw(GraphicsDevice, CommandList);
-                Input.End();
-
-                await Task.Delay(16);
-            }
-        }
-        );
-
-        //Logger.Warn("Application shuts down!");
-        //this.OnClose();
     }
 
     public void Tick()
     {
         Time.Update();
 
-        //this.MainWindow.PumpEvents();
         Input.Begin();
 
         AudioContext.Update();
@@ -153,10 +124,6 @@ public class Game : Disposable
         this.Draw(GraphicsDevice, this.CommandList);
     }
 
-
-    private Texture? _stagingTexture;
-    private readonly Control _host;
-    private SKBitmap _skBitmap;
 
     protected virtual void Init()
     {
@@ -481,7 +448,6 @@ public class Game : Disposable
 
     }
 
-    protected virtual void OnClose() { }
 
     public int GetTargetFps()
     {
@@ -513,10 +479,8 @@ public class Game : Disposable
     {
         GraphicsDevice.WaitForIdle();
 
-        // Verifica che la texture di staging abbia le stesse dimensioni della texture di destinazione
         if (_stagingTexture == null || _stagingTexture.Width != _finalOutputTexture.Width || _stagingTexture.Height != _finalOutputTexture.Height)
         {
-            // Ricrea la texture di staging se le dimensioni non corrispondono
             _stagingTexture?.Dispose();
             _stagingTexture = GraphicsDevice.ResourceFactory.CreateTexture(TextureDescription.Texture2D(
                 _finalOutputTexture.Width,
@@ -534,34 +498,27 @@ public class Game : Disposable
         GraphicsDevice.SubmitCommands(CommandList);
         GraphicsDevice.WaitForIdle();
 
-        // Mappa la texture di staging per leggere i dati.
         var mapped = GraphicsDevice.Map(_stagingTexture, MapMode.Read);
 
-        // Controlla se la mappatura ha successo
         if (mapped.Data == IntPtr.Zero)
         {
-            // Se la mappatura fallisce, non procedere
             GraphicsDevice.Unmap(_stagingTexture);
             return;
         }
-        //byte[] debugData = new byte[_stagingTexture.Width * _stagingTexture.Height* 4];
 
-        lock (_frame)
+        lock (_frameLock)
         {
             unsafe
             {
-                // Ottieni un puntatore ai dati mappati.
                 void* src = mapped.Data.ToPointer();
 
-                // Ottieni un puntatore ai pixel della SKBitmap.
                 void* dst = _skBitmap.GetPixels().ToPointer();
 
-                // Calcola la dimensione totale in byte da copiare.
                 long byteCount = _skBitmap.ByteCount;
                 unsafe
                 {
                     var srcPtr = (byte*)mapped.Data.ToPointer();
-                    var dstPtr = (byte*)_skBitmap.GetPixels().ToPointer(); // per confronto
+                    var dstPtr = (byte*)_skBitmap.GetPixels().ToPointer();
                     var srcPitch = mapped.RowPitch;
                     var dstPitch = _skBitmap.Width * 4;
 
@@ -570,44 +527,10 @@ public class Game : Disposable
                         var srcOffset = srcPtr + (y * srcPitch);
                         var dstOffset = dstPtr + (y * dstPitch);
 
-                        // Copia i dati in un array locale, non direttamente nella SKBitmap
-                        //Marshal.Copy((IntPtr)srcOffset, debugData, (int)(y * srcPitch), (int)srcPitch);
-
-                        // Copia i dati nella SKBitmap, come facevi prima
                         Buffer.MemoryCopy(srcOffset, dstOffset, dstPitch, dstPitch);
                     }
-
-                    //using (var stream = File.OpenWrite("debug_bitmap_output.bmp"))
-                    //{
-                    //    stream.Write(debugData);
-                    ////}
-
-                    //var info = new SKImageInfo(
-                    //    (int)_finalOutputTexture.Width,
-                    //    (int)_finalOutputTexture.Height,
-                    //    SKColorType.Rgba8888,
-                    //    SKAlphaType.Premul);
-
-                    //using (var bitmap = new SKBitmap(info))
-                    //{
-                    //    // Copia i byte nell'area dei pixel della bitmap
-                    //    Marshal.Copy(debugData, 0, bitmap.GetPixels(), debugData.Length);
-
-                    //    // Salva la bitmap come PNG
-                    //    using (var stream = File.OpenWrite("raw.png"))
-                    //    {
-                    //        bitmap.Encode(stream, SKEncodedImageFormat.Png, 100);
-                    //    }
-                    //}
-                    //using (var stream = File.OpenWrite("debug_bitmap_output.png"))
-                    //{
-                    //    skBitmap.Encode(stream, SKEncodedImageFormat.Png, 100);
-                    //}
                 }
 
-                // Copia i dati dalla memoria del buffer a quella della bitmap.
-                // Questo è il punto critico dove l'errore potrebbe verificarsi.
-                // Assumiamo che il formato dei pixel sia compatibile.
                 Buffer.MemoryCopy(src, dst, byteCount, byteCount);
             }
         }
@@ -641,34 +564,16 @@ public class Game : Disposable
     {
         OnResize(new Rectangle(0, 0, width, height));
 
-        _skBitmap.Dispose();
-        _skBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        lock (_frameLock)
+        {
+            _skBitmap?.Dispose();
+            _skBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        }
 
     }
 
     public void Prepare()
     {
-
-
-        Logger.Info("Hello World! Bliss start...");
-        Logger.Info($"\t> CPU: {SystemInfo.Cpu}");
-        Logger.Info($"\t> MEMORY: {SystemInfo.MemorySize} GB");
-        Logger.Info($"\t> THREADS: {SystemInfo.Threads}");
-        Logger.Info($"\t> OS: {SystemInfo.Os}");
-
-        Logger.Info("Initialize window and graphics device...");
-        //GraphicsDeviceOptions options = new GraphicsDeviceOptions()
-        //{
-        //    Debug = false,
-        //    HasMainSwapchain = true,
-        //    SwapchainDepthFormat = PixelFormat.D32FloatS8UInt,
-        //    SyncToVerticalBlank = this.Settings.VSync,
-        //    ResourceBindingModel = ResourceBindingModel.Improved,
-        //    PreferDepthRangeZeroToOne = true,
-        //    PreferStandardClipSpaceYDirection = true,
-        //    SwapchainSrgbFormat = false
-        //};
-
         var options = new GraphicsDeviceOptions()
         {
             Debug = false,
@@ -680,52 +585,30 @@ public class Game : Disposable
             PreferStandardClipSpaceYDirection = true,
         };
 
-
-        //this.MainWindow = Window.CreateWindow(WindowType.Sdl3, this.Settings.Width, this.Settings.Height, this.Settings.Title, this.Settings.WindowFlags, options, this.Settings.Backend, out GraphicsDevice graphicsDevice);
-        //this.MainWindow.Resized += () => this.OnResize(new Rectangle(this.MainWindow.GetX(), this.MainWindow.GetY(), this.MainWindow.GetWidth(), this.MainWindow.GetHeight()));
-
         var graphicsDevice = GraphicsDevice.CreateVulkan(options);
         this.GraphicsDevice = graphicsDevice;
 
-        Logger.Info("Loading window icon...");
-        //this.MainWindow.SetIcon(this.Settings.IconPath != string.Empty ? new Image(this.Settings.IconPath) : new Image("content/images/icon.png"));
-
-        Logger.Info("Initialize time...");
         Time.Init();
 
-        Logger.Info($"Set target FPS to: {this.Settings.TargetFps}");
         this.SetTargetFps(this.Settings.TargetFps);
 
-        Logger.Info("Initialize command list...");
         this.CommandList = graphicsDevice.ResourceFactory.CreateCommandList();
 
-        Logger.Info("Initialize global resources...");
         GlobalResource.Init(graphicsDevice);
 
-        Logger.Info("Initialize input...");
-        //if (this.MainWindow is Sdl3Window)
-        //{
-        //    Input.Init(new Sdl3InputContext(this.MainWindow));
-        //}
-        //else
-        //{
-        //    throw new Exception("This type of window is not supported by the InputContext!");
-        //}
         Input.Init(new AvaloniaInputContext(_host));
 
-        Logger.Info("Initialize audio device...");
         AudioContext.Initialize(44100, 2);
 
         this.Init();
-
     }
 
 
     public SKBitmap GetFrame()
     {
-        lock (_frame)
+        lock (_frameLock)
         {
-            return _skBitmap;
+            return _skBitmap!;
         }
     }
 }

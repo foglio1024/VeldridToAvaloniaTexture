@@ -15,18 +15,13 @@ namespace VeldridToAvaloniaTexture;
 /// as a bitmap. The rendering process uses Vulkan as the underlying graphics API.</remarks>
 public class VeldridRenderer : IDisposable
 {
-    private SKBitmap _skBitmap;
-    private Texture? _stagingTexture;
-    private Texture? _colorTexture;
     private int _width, _height;
-    private Game _game;
+    private readonly Game _game;
 
     public VeldridRenderer(int width, int height, Control host)
     {
         _width = Math.Max(1, width);
         _height = Math.Max(1, height);
-
-        _skBitmap = new SKBitmap(_width, _height, SKColorType.Rgba8888, SKAlphaType.Premul);
 
         _game = new Game(new GameSettings
         {
@@ -38,8 +33,8 @@ public class VeldridRenderer : IDisposable
             VSync = true,
             SampleCount = TextureSampleCount.Count1
         }, host);
+
         _game.Prepare();
-        //Task.Run(_game.Run);
     }
 
     /// <summary>
@@ -57,21 +52,6 @@ public class VeldridRenderer : IDisposable
         _height = height;
 
         _game.ResizeTo(_width, _height);
-        _skBitmap.Dispose();
-        _skBitmap = new SKBitmap(_width, _height, SKColorType.Rgba8888, SKAlphaType.Premul);
-
-
-    }
-
-    /// <summary>
-    /// Renders a single frame by executing a series of graphics commands.
-    /// </summary>
-    /// <remarks>This method prepares the command list, sets the framebuffer, clears the color target,  and
-    /// submits the commands to the graphics device. It ensures that the graphics device  completes all operations
-    /// before returning. This method is typically used in rendering workflows to produce a visual frame.</remarks>
-    private void Draw()
-    {
-        _game.Tick();
     }
 
     /// <summary>
@@ -82,8 +62,7 @@ public class VeldridRenderer : IDisposable
     /// object is no longer needed to free resources and avoid memory leaks.</remarks>
     public void Dispose()
     {
-        _colorTexture?.Dispose();
-        _skBitmap.Dispose();
+        _game.Dispose();
     }
 
     /// <summary>
@@ -97,30 +76,18 @@ public class VeldridRenderer : IDisposable
     public SKBitmap GetRenderedBitmap()
     {
         Draw();
-
         return _game.GetFrame();
-
-        //_commandList.Begin();
-
-        //_commandList.CopyTexture(
-        //    source: _colorTexture,
-        //    destination: _stagingTexture
-        //    );
-
-        //_commandList.End();
-        //_graphicsDevice.SubmitCommands(_commandList);
-        //_graphicsDevice.WaitForIdle();
-
-        //var mapped = _graphicsDevice.Map(_stagingTexture, MapMode.Read);
-        //unsafe
-        //{
-        //    void* src = mapped.Data.ToPointer();
-        //    void* dst = _skBitmap.GetPixels().ToPointer();
-
-        //    Buffer.MemoryCopy(src, dst, _skBitmap.ByteCount, _skBitmap.ByteCount);
-        //}
-        //_graphicsDevice.Unmap(_stagingTexture);
-
-        return _skBitmap;
     }
+
+    /// <summary>
+    /// Renders a single frame by executing a series of graphics commands.
+    /// </summary>
+    /// <remarks>This method prepares the command list, sets the framebuffer, clears the color target,  and
+    /// submits the commands to the graphics device. It ensures that the graphics device  completes all operations
+    /// before returning. This method is typically used in rendering workflows to produce a visual frame.</remarks>
+    private void Draw()
+    {
+        _game.Tick();
+    }
+
 }

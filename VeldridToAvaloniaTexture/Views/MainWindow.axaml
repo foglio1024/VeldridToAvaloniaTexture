@@ -17,7 +17,13 @@
         <vm:MainWindowViewModel />
     </Design.DataContext>
     <Panel>
-        <controls:VeldridView />
-
+        <controls:Avalonia3DViewport x:Name="viewport" />
+        <Slider
+            Width="100"
+            VerticalAlignment="Top"
+            Maximum="60"
+            Minimum="1"
+            Value="{Binding #viewport.FrameRate}" />
+        <TextBlock VerticalAlignment="Bottom" Text="{Binding #viewport.FrameRate}" />
     </Panel>
 </Window>

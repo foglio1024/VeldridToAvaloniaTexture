@@ -1,17 +1,13 @@
 using Avalonia.Controls;
-using Avalonia.Media.Imaging;
 using Bliss.CSharp;
 using Bliss.CSharp.Camera.Dim3;
 using Bliss.CSharp.Fonts;
 using Bliss.CSharp.Geometry;
-using Bliss.CSharp.Graphics;
-using Bliss.CSharp.Graphics.Rendering.Batches.Primitives;
 using Bliss.CSharp.Graphics.Rendering.Batches.Sprites;
 using Bliss.CSharp.Graphics.Rendering.Passes;
 using Bliss.CSharp.Graphics.Rendering.Renderers;
 using Bliss.CSharp.Images;
 using Bliss.CSharp.Interact;
-using Bliss.CSharp.Interact.Contexts;
 using Bliss.CSharp.Interact.Keyboards;
 using Bliss.CSharp.Interact.Mice;
 using Bliss.CSharp.Logging;
@@ -19,36 +15,28 @@ using Bliss.CSharp.Materials;
 using Bliss.CSharp.Textures;
 using Bliss.CSharp.Textures.Cubemaps;
 using Bliss.CSharp.Transformations;
-using Bliss.CSharp.Windowing;
 using MiniAudioEx;
 using SkiaSharp;
 using System;
-using System.IO;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using System.Threading;
-using System.Threading.Tasks;
 using Veldrid;
-using Veldrid.Vk;
 using Color = Bliss.CSharp.Colors.Color;
 using Image = Bliss.CSharp.Images.Image;
 using Rectangle = Bliss.CSharp.Transformations.Rectangle;
-using Window = Bliss.CSharp.Windowing.Window;
 
 namespace Bliss.Test;
 
 public class Game : Disposable
 {
-    public static Game Instance { get; private set; }
-    public GameSettings Settings { get; private set; }
-    public GraphicsDevice GraphicsDevice { get; private set; }
-    public CommandList CommandList { get; private set; }
-
-    public FullScreenRenderPass FullScreenRenderPass { get; private set; }
-    public RenderTexture2D FullScreenTexture { get; private set; }
+    private readonly GameSettings _settings;
+    private GraphicsDevice _graphicsDevice;
+    private CommandList _commandList;
+    private FullScreenRenderPass _fullScreenRenderPass;
+    private RenderTexture2D _fullScreenTexture;
 
     private ImmediateRenderer _immediateRenderer;
-    //private SpriteBatch _spriteBatch;
+    private SpriteBatch _spriteBatch;
     //private PrimitiveBatch _primitiveBatch;
     private AnimatedImage _animatedImage;
     private Texture2D _gif;
@@ -64,7 +52,8 @@ public class Game : Disposable
     private Model _planeModel;
     private Model _treeModel;
     private Model _cyberCarModel;
-    private Texture2D _cynerTexture;
+    private Model _skullModel;
+    private Texture2D _cyberTexture;
 
     private Texture2D _customMeshTexture;
     private Mesh _customPoly;
@@ -87,6 +76,7 @@ public class Game : Disposable
     private Texture? _stagingTexture;
     private readonly Control _host;
     private SKBitmap? _skBitmap;
+    private DummyWindow _dummyWindow;
 
     private double _fixedFrameRate;
 
@@ -98,9 +88,8 @@ public class Game : Disposable
 
     public Game(GameSettings settings, Control host)
     {
-        Instance = this;
-        this.Settings = settings;
-        this._fixedUpdateTimeStep = settings.FixedTimeStep;
+        _settings = settings;
+        _fixedUpdateTimeStep = settings.FixedTimeStep;
         _host = host;
     }
 
@@ -111,26 +100,25 @@ public class Game : Disposable
         Input.Begin();
 
         AudioContext.Update();
-        this.Update();
-        this.AfterUpdate();
+        Update();
+        AfterUpdate();
 
-        this._fixedUpdateTimer += Time.Delta;
-        while (this._fixedUpdateTimer >= this._fixedUpdateTimeStep)
+        _fixedUpdateTimer += Time.Delta;
+        while (_fixedUpdateTimer >= _fixedUpdateTimeStep)
         {
-            this.FixedUpdate();
-            this._fixedUpdateTimer -= this._fixedUpdateTimeStep;
+            FixedUpdate();
+            _fixedUpdateTimer -= _fixedUpdateTimeStep;
         }
 
-        this.Draw(GraphicsDevice, this.CommandList);
+        Draw(_graphicsDevice, _commandList);
     }
-
 
     protected virtual void Init()
     {
-        this.FullScreenRenderPass = new FullScreenRenderPass(this.GraphicsDevice);
-        this.FullScreenTexture = new RenderTexture2D(this.GraphicsDevice, (uint)this.Settings.Width, (uint)this.Settings.Height, this.Settings.SampleCount);
-        this._finalOutputTexture = new RenderTexture2D(this.GraphicsDevice, (uint)this.Settings.Width, (uint)this.Settings.Height, this.Settings.SampleCount);
-        _stagingTexture = GraphicsDevice.ResourceFactory.CreateTexture(TextureDescription.Texture2D(
+        _fullScreenRenderPass = new FullScreenRenderPass(_graphicsDevice);
+        _fullScreenTexture = new RenderTexture2D(_graphicsDevice, (uint)_settings.Width, (uint)_settings.Height, _settings.SampleCount);
+        _finalOutputTexture = new RenderTexture2D(_graphicsDevice, (uint)_settings.Width, (uint)_settings.Height, _settings.SampleCount);
+        _stagingTexture = _graphicsDevice.ResourceFactory.CreateTexture(TextureDescription.Texture2D(
             _finalOutputTexture.Width,
             _finalOutputTexture.Height,
             mipLevels: 1,
@@ -139,65 +127,67 @@ public class Game : Disposable
             TextureUsage.Staging));
 
         _skBitmap = new SKBitmap((int)_finalOutputTexture.Width, (int)_finalOutputTexture.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        _dummyWindow = new DummyWindow();
+        _dummyWindow.SetSize(_settings.Width, _settings.Height);
+        _immediateRenderer = new ImmediateRenderer(_graphicsDevice);
+        _spriteBatch = new SpriteBatch(_graphicsDevice, _dummyWindow);
+        //_primitiveBatch = new PrimitiveBatch(GraphicsDevice, MainWindow);
 
-        this._immediateRenderer = new ImmediateRenderer(this.GraphicsDevice);
-        //this._spriteBatch = new SpriteBatch(this.GraphicsDevice, this.MainWindow);
-        //this._primitiveBatch = new PrimitiveBatch(this.GraphicsDevice, this.MainWindow);
+        _font = new Font("content/fonts/fontoe.ttf");
+        _logoTexture = new Texture2D(_graphicsDevice, "content/images/logo.png");
+        _animatedImage = new AnimatedImage("content/animated.gif");
+        _gif = new Texture2D(_graphicsDevice, _animatedImage.SpriteSheet);
 
-        this._font = new Font("content/fonts/fontoe.ttf");
-        this._logoTexture = new Texture2D(this.GraphicsDevice, "content/images/logo.png");
-        this._animatedImage = new AnimatedImage("content/animated.gif");
-        this._gif = new Texture2D(this.GraphicsDevice, this._animatedImage.SpriteSheet);
-
-        float aspectRatio = (float)this.Settings.Width / (float)this.Settings.Height;
-        this._cam3D = new Cam3D(new Vector3(0, 3, -3), new Vector3(0, 1.5F, 0), aspectRatio);
-        this._playerModel = Model.Load(this.GraphicsDevice, "content/player.glb");
-        this._planeModel = Model.Load(this.GraphicsDevice, "content/plane.glb");
-        this._treeModel = Model.Load(this.GraphicsDevice, "content/tree.glb");
-        this._cyberCarModel = Model.Load(this.GraphicsDevice, "content/cybercar.glb", false);
-        this._cynerTexture = new Texture2D(this.GraphicsDevice, "content/cybercar.png");
+        float aspectRatio = (float)_settings.Width / (float)_settings.Height;
+        _cam3D = new Cam3D(new Vector3(0, 3, -3), new Vector3(0, 1.5F, 0), aspectRatio);
+        _playerModel = Model.Load(_graphicsDevice, "content/player.glb");
+        _planeModel = Model.Load(_graphicsDevice, "content/plane.glb");
+        _treeModel = Model.Load(_graphicsDevice, "content/tree.glb");
+        _cyberCarModel = Model.Load(_graphicsDevice, "content/cybercar.glb", false);
+        _skullModel = Model.Load(_graphicsDevice, "E:\\Blender\\skull.obj", false);
+        _cyberTexture = new Texture2D(_graphicsDevice, "content/cybercar.png");
 
         foreach (Mesh mesh in _cyberCarModel.Meshes)
         {
-            mesh.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._cynerTexture);
+            mesh.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _cyberTexture);
         }
 
-        this._customMeshTexture = new Texture2D(this.GraphicsDevice, "content/cube.png");
+        _customMeshTexture = new Texture2D(_graphicsDevice, "content/cube.png");
 
-        this._customPoly = Mesh.GenPoly(this.GraphicsDevice, 40, 1);
-        this._customPoly.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customPoly = Mesh.GenPoly(_graphicsDevice, 40, 1);
+        _customPoly.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customCube = Mesh.GenCube(this.GraphicsDevice, 1, 1, 1);
-        this._customCube.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customCube = Mesh.GenCube(_graphicsDevice, 1, 1, 1);
+        _customCube.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customSphere = Mesh.GenSphere(this.GraphicsDevice, 1F, 40, 40);
-        this._customSphere.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customSphere = Mesh.GenSphere(_graphicsDevice, 1F, 40, 40);
+        _customSphere.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customHemishpere = Mesh.GenHemisphere(this.GraphicsDevice, 1F, 40, 40);
-        this._customHemishpere.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customHemishpere = Mesh.GenHemisphere(_graphicsDevice, 1F, 40, 40);
+        _customHemishpere.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customCylinder = Mesh.GenCylinder(this.GraphicsDevice, 1F, 1F, 40);
-        this._customCylinder.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customCylinder = Mesh.GenCylinder(_graphicsDevice, 1F, 1F, 40);
+        _customCylinder.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customCapsule = Mesh.GenCapsule(this.GraphicsDevice, 1, 1, 60);
-        this._customCapsule.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customCapsule = Mesh.GenCapsule(_graphicsDevice, 1, 1, 60);
+        _customCapsule.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customCone = Mesh.GenCone(this.GraphicsDevice, 1F, 1F, 40);
-        this._customCone.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customCone = Mesh.GenCone(_graphicsDevice, 1F, 1F, 40);
+        _customCone.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customTorus = Mesh.GenTorus(this.GraphicsDevice, 2.0F, 1F, 40, 40);
-        this._customTorus.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customTorus = Mesh.GenTorus(_graphicsDevice, 2.0F, 1F, 40, 40);
+        _customTorus.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customKnot = Mesh.GenKnot(this.GraphicsDevice, 1F, 1F, 40, 40);
-        this._customKnot.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), this._customMeshTexture);
+        _customKnot = Mesh.GenKnot(_graphicsDevice, 1F, 1F, 40, 40);
+        _customKnot.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), _customMeshTexture);
 
-        this._customHeighmap = Mesh.GenHeightmap(this.GraphicsDevice, new Image("content/heightmap.png"), new Vector3(1, 1, 1));
-        this._customHeighmap.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), new Texture2D(this.GraphicsDevice, "content/heightmap.png"));
+        _customHeighmap = Mesh.GenHeightmap(_graphicsDevice, new Image("content/heightmap.png"), new Vector3(1, 1, 1));
+        _customHeighmap.Material.SetMapTexture(MaterialMapType.Albedo.GetName(), new Texture2D(_graphicsDevice, "content/heightmap.png"));
 
-        this._cubemap = new Cubemap(this.GraphicsDevice, "content/cubemap.png");
-        this._cubemapTexture = new Texture2D(this.GraphicsDevice, this._cubemap.Images[5][0]);
+        _cubemap = new Cubemap(_graphicsDevice, "content/cubemap.png");
+        _cubemapTexture = new Texture2D(_graphicsDevice, _cubemap.Images[5][0]);
 
-        this._button = new Texture2D(this.GraphicsDevice, "content/button.png");
+        _button = new Texture2D(_graphicsDevice, "content/button.png");
     }
 
     protected virtual void Update()
@@ -207,7 +197,7 @@ public class Game : Disposable
             Logger.Error("DOUBLE CLICKED!");
         }
 
-        this._cam3D.Update((float)Time.Delta);
+        _cam3D.Update((float)Time.Delta);
     }
 
     protected virtual void AfterUpdate() { }
@@ -216,12 +206,12 @@ public class Game : Disposable
     {
         if (Input.IsKeyDown(KeyboardKey.H))
         {
-            this._playingAnim = true;
-            this._frameCount++;
+            _playingAnim = true;
+            _frameCount++;
 
-            if (this._frameCount >= this._playerModel.Animations[1].FrameCount)
+            if (_frameCount >= _playerModel.Animations[1].FrameCount)
             {
-                this._frameCount = 0;
+                _frameCount = 0;
             }
         }
     }
@@ -229,7 +219,7 @@ public class Game : Disposable
     protected virtual void Draw(GraphicsDevice graphicsDevice, CommandList commandList)
     {
         commandList.Begin();
-        commandList.SetFramebuffer(this.FullScreenTexture.Framebuffer);
+        commandList.SetFramebuffer(_fullScreenTexture.Framebuffer);
         commandList.ClearColorTarget(0, Color.DarkGray.ToRgbaFloat());
         commandList.ClearDepthStencil(1.0F);
 
@@ -237,113 +227,114 @@ public class Game : Disposable
         Input.EnableRelativeMouseMode();
 
         // Drawing 3D.
-        this._cam3D.Begin();
+        _cam3D.Begin();
 
         // ImmediateRenderer START
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawCube(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(9, 0, 6) }, new Vector3(1, 1, 1));
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawCube(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(9, 0, 6) }, new Vector3(1, 1, 1));
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawCubeWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(11, 0, 6) }, new Vector3(1, 1, 1), Color.Green);
+        //_immediateRenderer.DrawCubeWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(11, 0, 6) }, new Vector3(1, 1, 1), Color.Green);
 
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawSphere(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(13, 0, 6) }, 1, 40, 40);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawSphere(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(13, 0, 6) }, 1, 40, 40);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawSphereWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(15, 0, 6) }, 1, 40, 40, Color.Green);
+        //_immediateRenderer.DrawSphereWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(15, 0, 6) }, 1, 40, 40, Color.Green);
 
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawHemisphere(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(17, 0, 6) }, 1, 40, 40);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawHemisphere(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(17, 0, 6) }, 1, 40, 40);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawHemisphereWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(19, 0, 6) }, 1, 40, 40, Color.Green);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.DrawHemisphereWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(19, 0, 6) }, 1, 40, 40, Color.Green);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawLine(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Vector3(20.5F, 0, 6), new Vector3(21.5F, 0, 6), Color.Green);
+        //_immediateRenderer.DrawLine(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Vector3(20.5F, 0, 6), new Vector3(21.5F, 0, 6), Color.Green);
 
-        this._immediateRenderer.DrawGrid(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform(), 96, 1, 16, Color.Gray);
+        _immediateRenderer.DrawGrid(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform(), 96, 1, 16, Color.Gray);
 
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawCylinder(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(23, 0, 6) }, 1, 1, 40);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawCylinder(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(23, 0, 6) }, 1, 1, 40);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawCylinderWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(25, 0, 6) }, 1, 1, 40, Color.Green);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.DrawCylinderWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(25, 0, 6) }, 1, 1, 40, Color.Green);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawBoundingBox(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(28, 0, 6) }, this._playerModel.BoundingBox, Color.Green);
+        //_immediateRenderer.DrawBoundingBox(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(28, 0, 6) }, _playerModel.BoundingBox, Color.Green);
 
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawCapsule(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(31, 0, 6) }, 1, 1, 40);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawCapsule(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(31, 0, 6) }, 1, 1, 40);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawCapsuleWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(33, 0, 6) }, 1, 1, 40, Color.Green);
+        //_immediateRenderer.DrawCapsuleWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(33, 0, 6) }, 1, 1, 40, Color.Green);
 
-        this._immediateRenderer.SetTexture(this._logoTexture, sourceRect: new Rectangle(0, 0, (int)this._logoTexture.Width, (int)this._logoTexture.Height));
-        this._immediateRenderer.DrawBillboard(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Vector3(35, 0, 6));
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_logoTexture, sourceRect: new Rectangle(0, 0, (int)_logoTexture.Width, (int)_logoTexture.Height));
+        //_immediateRenderer.DrawBillboard(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Vector3(35, 0, 6));
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawCone(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(38, 0, 6) }, 1, 1, 40);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawCone(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(38, 0, 6) }, 1, 1, 40);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawConeWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(40, 0, 6) }, 1, 1, 40, Color.Green);
+        //_immediateRenderer.DrawConeWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(40, 0, 6) }, 1, 1, 40, Color.Green);
 
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawTorus(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(42, 0, 6) }, 2, 1, 40, 40);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawTorus(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(42, 0, 6) }, 2, 1, 40, 40);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawTorusWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(44, 0, 6) }, 2, 1, 40, 40, Color.Green);
+        //_immediateRenderer.DrawTorusWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(44, 0, 6) }, 2, 1, 40, 40, Color.Green);
 
-        this._immediateRenderer.SetTexture(this._customMeshTexture);
-        this._immediateRenderer.DrawKnot(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(46, 0, 6) }, 1, 1, 40, 40);
-        this._immediateRenderer.ResetSettings();
+        //_immediateRenderer.SetTexture(_customMeshTexture);
+        //_immediateRenderer.DrawKnot(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(46, 0, 6) }, 1, 1, 40, 40);
+        //_immediateRenderer.ResetSettings();
 
-        this._immediateRenderer.DrawKnotWires(commandList, this.FullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(48, 0, 6) }, 1, 1, 40, 40, Color.Green);
+        //_immediateRenderer.DrawKnotWires(commandList, _fullScreenTexture.Framebuffer.OutputDescription, new Transform() { Translation = new Vector3(48, 0, 6) }, 1, 1, 40, 40, Color.Green);
         // ImmediateRenderer END
 
-        this._customPoly.Draw(commandList, new Transform() { Translation = new Vector3(9, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customCube.Draw(commandList, new Transform() { Translation = new Vector3(11, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customSphere.Draw(commandList, new Transform() { Translation = new Vector3(13, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customHemishpere.Draw(commandList, new Transform() { Translation = new Vector3(15, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customCylinder.Draw(commandList, new Transform() { Translation = new Vector3(17, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customCapsule.Draw(commandList, new Transform() { Translation = new Vector3(19, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customCone.Draw(commandList, new Transform() { Translation = new Vector3(21, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customTorus.Draw(commandList, new Transform() { Translation = new Vector3(23, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customKnot.Draw(commandList, new Transform() { Translation = new Vector3(25, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
-        this._customHeighmap.Draw(commandList, new Transform() { Translation = new Vector3(27, 0, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
+        //_customPoly.Draw(commandList, new Transform() { Translation = new Vector3(9, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customCube.Draw(commandList, new Transform() { Translation = new Vector3(11, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customSphere.Draw(commandList, new Transform() { Translation = new Vector3(13, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customHemishpere.Draw(commandList, new Transform() { Translation = new Vector3(15, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customCylinder.Draw(commandList, new Transform() { Translation = new Vector3(17, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customCapsule.Draw(commandList, new Transform() { Translation = new Vector3(19, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customCone.Draw(commandList, new Transform() { Translation = new Vector3(21, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customTorus.Draw(commandList, new Transform() { Translation = new Vector3(23, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customKnot.Draw(commandList, new Transform() { Translation = new Vector3(25, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        //_customHeighmap.Draw(commandList, new Transform() { Translation = new Vector3(27, 0, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
 
-        if (this._cam3D.GetFrustum().ContainsBox(this._planeModel.BoundingBox))
-        {
-            this._planeModel.Draw(commandList, new Transform(), this.FullScreenTexture.Framebuffer.OutputDescription);
-        }
+        //if (_cam3D.GetFrustum().ContainsBox(_planeModel.BoundingBox))
+        //{
+        //    _planeModel.Draw(commandList, new Transform(), _fullScreenTexture.Framebuffer.OutputDescription);
+        //}
 
-        this._treeModel.Draw(commandList, new Transform() { Translation = new Vector3(0, 0, 20) }, this.FullScreenTexture.Framebuffer.OutputDescription, rasterizerState: RasterizerStateDescription.CULL_NONE);
+        //_treeModel.Draw(commandList, new Transform() { Translation = new Vector3(0, 0, 20) }, _fullScreenTexture.Framebuffer.OutputDescription, rasterizerState: RasterizerStateDescription.CULL_NONE);
 
-        this._cyberCarModel.Draw(commandList, new Transform() { Translation = new Vector3(10, 0, 20) }, this.FullScreenTexture.Framebuffer.OutputDescription);
+        _cyberCarModel.Draw(commandList, new Transform() { Translation = new Vector3(10, 0, 20) }, _fullScreenTexture.Framebuffer.OutputDescription);
+        _skullModel.Draw(commandList, new Transform() { Translation = new Vector3(-1, 2, 1) }, _fullScreenTexture.Framebuffer.OutputDescription);
 
         if (Input.IsKeyPressed(KeyboardKey.G))
         {
-            this._playerModel.ResetAnimationBones(commandList);
-            this._playingAnim = false;
+            _playerModel.ResetAnimationBones(commandList);
+            _playingAnim = false;
             Logger.Error("RESET ANIM");
         }
 
-        if (this._cam3D.GetFrustum().ContainsBox(this._playerModel.BoundingBox))
+        if (_cam3D.GetFrustum().ContainsBox(_playerModel.BoundingBox))
         {
-            if (this._playingAnim)
+            if (_playingAnim)
             {
-                this._playerModel.UpdateAnimationBones(commandList, this._playerModel.Animations[1], this._frameCount);
+                _playerModel.UpdateAnimationBones(commandList, _playerModel.Animations[1], _frameCount);
             }
-            this._playerModel.Draw(commandList, new Transform() { Translation = new Vector3(0, 0.05F, 0) }, this.FullScreenTexture.Framebuffer.OutputDescription);
+            _playerModel.Draw(commandList, new Transform() { Translation = new Vector3(0, 0.05F, 0) }, _fullScreenTexture.Framebuffer.OutputDescription);
         }
 
-        //this._playerModel.ResetAnimationBones(commandList);
-        //this._playerModel.Draw(commandList, new Transform() { Translation = new Vector3(4, 0.05F, 0)}, this.FullScreenTexture.Framebuffer.OutputDescription);
+        //_playerModel.ResetAnimationBones(commandList);
+        //_playerModel.Draw(commandList, new Transform() { Translation = new Vector3(4, 0.05F, 0)}, FullScreenTexture.Framebuffer.OutputDescription);
 
-        this._cam3D.End();
+        _cam3D.End();
 
         // SpriteBatch Drawing.
-        //this._spriteBatch.Begin(commandList, this.FullScreenTexture.Framebuffer.OutputDescription);
+        _spriteBatch.Begin(commandList, _fullScreenTexture.Framebuffer.OutputDescription);
 
         //if (Input.IsKeyPressed(KeyboardKey.O))
         //{
@@ -359,48 +350,48 @@ public class Game : Disposable
         //{
         //    if (Input.GetTypedText(out string text))
         //    {
-        //        this._textInput += text;
+        //        _textInput += text;
         //    }
 
         //    if (Input.IsKeyPressed(KeyboardKey.BackSpace, true))
         //    {
-        //        if (this._textInput.Length > 0)
+        //        if (_textInput.Length > 0)
         //        {
-        //            this._textInput = this._textInput.Remove(this._textInput.Length - 1, 1);
+        //            _textInput = _textInput.Remove(_textInput.Length - 1, 1);
         //        }
         //    }
         //}
 
-        //this._spriteBatch.DrawText(this._font, $"Text Input: {this._textInput}", new Vector2(80, 80), 18);
+        //_spriteBatch.DrawText(_font, $"Text Input: {_textInput}", new Vector2(80, 80), 18);
 
-        //this._spriteBatch.DrawText(this._font, $"FPS: {(int)(1.0F / Time.Delta)}", new Vector2(5, 5), 18);
+        _spriteBatch.DrawText(_font, $"FPS: {(int)(1.0F / Time.Delta)}", new Vector2(5, 5), 18);
 
         //int frame = 4;
-        //this._animatedImage.GetFrameInfo(frame, out int width, out int height, out float duration);
+        //_animatedImage.GetFrameInfo(frame, out int width, out int height, out float duration);
 
-        //this._spriteBatch.PushRasterizerState(this._spriteBatch.GetCurrentRasterizerState() with { ScissorTestEnabled = true });
-        //this._spriteBatch.PushScissorRect(new Rectangle(30, 30, (int)(width / 2.0F * 0.2F), (int)(height / 2.0F * 0.2F)));
-        //this._spriteBatch.DrawTexture(this._gif, new Vector2(30, 30), sourceRect: new Rectangle(width * frame, 0, width, height), scale: new Vector2(0.2F, 0.2F), color: new Color(255, 255, 255, 155));
-        //this._spriteBatch.PopScissorRect();
-        //this._spriteBatch.PopRasterizerState();
+        //_spriteBatch.PushRasterizerState(_spriteBatch.GetCurrentRasterizerState() with { ScissorTestEnabled = true });
+        //_spriteBatch.PushScissorRect(new Rectangle(30, 30, (int)(width / 2.0F * 0.2F), (int)(_height / 2.0F * 0.2F)));
+        //_spriteBatch.DrawTexture(_gif, new Vector2(30, 30), sourceRect: new Rectangle(width * frame, 0, width, height), scale: new Vector2(0.2F, 0.2F), color: new Color(255, 255, 255, 155));
+        //_spriteBatch.PopScissorRect();
+        //_spriteBatch.PopRasterizerState();
 
-        //this._spriteBatch.DrawTexture(this._customMeshTexture, Input.GetMousePosition(), scale: new Vector2(3, 3));
-        //this._spriteBatch.DrawTexture(this._button, new Vector2(300, 300), scale: new Vector2(3, 3));
+        //_spriteBatch.DrawTexture(_customMeshTexture, Input.GetMousePosition(), scale: new Vector2(3, 3));
+        //_spriteBatch.DrawTexture(_button, new Vector2(300, 300), scale: new Vector2(3, 3));
 
-        //this._spriteBatch.End();
+        _spriteBatch.End();
 
-        //this._primitiveBatch.Begin(commandList, this.FullScreenTexture.Framebuffer.OutputDescription);
+        //_primitiveBatch.Begin(commandList, FullScreenTexture.Framebuffer.OutputDescription);
 
-        //this._primitiveBatch.PushRasterizerState(this._primitiveBatch.GetCurrentRasterizerState() with { ScissorTestEnabled = true });
-        //this._primitiveBatch.PushScissorRect(new Rectangle(90, 90, 40, 80));
-        //this._primitiveBatch.DrawFilledCircle(new Vector2(130, 130), 40, 40, 0.5F, new Color(130, 130, 255, 120));
-        //this._primitiveBatch.PopScissorRect();
-        //this._primitiveBatch.PopRasterizerState();
+        //_primitiveBatch.PushRasterizerState(_primitiveBatch.GetCurrentRasterizerState() with { ScissorTestEnabled = true });
+        //_primitiveBatch.PushScissorRect(new Rectangle(90, 90, 40, 80));
+        //_primitiveBatch.DrawFilledCircle(new Vector2(130, 130), 40, 40, 0.5F, new Color(130, 130, 255, 120));
+        //_primitiveBatch.PopScissorRect();
+        //_primitiveBatch.PopRasterizerState();
 
-        //this._primitiveBatch.DrawFilledRectangle(new RectangleF(200, 200, 100, 100), origin: new Vector2(0, 0), rotation: _frameCount, color: Color.Green);
-        //this._primitiveBatch.DrawEmptyRectangle(new RectangleF(200, 200, 100, 100), 4, origin: new Vector2(0, 0), rotation: _frameCount, color: Color.Red);
+        //_primitiveBatch.DrawFilledRectangle(new RectangleF(200, 200, 100, 100), origin: new Vector2(0, 0), rotation: _frameCount, color: Color.Green);
+        //_primitiveBatch.DrawEmptyRectangle(new RectangleF(200, 200, 100, 100), 4, origin: new Vector2(0, 0), rotation: _frameCount, color: Color.Red);
 
-        //this._primitiveBatch.End();
+        //_primitiveBatch.End();
 
         commandList.End();
         graphicsDevice.SubmitCommands(commandList);
@@ -409,17 +400,17 @@ public class Game : Disposable
         // Draw ScreenPass.
         commandList.Begin();
 
-        if (this.FullScreenTexture.SampleCount != TextureSampleCount.Count1)
+        if (_fullScreenTexture.SampleCount != TextureSampleCount.Count1)
         {
-            commandList.ResolveTexture(this.FullScreenTexture.ColorTexture, this.FullScreenTexture.DestinationTexture);
+            commandList.ResolveTexture(_fullScreenTexture.ColorTexture, _fullScreenTexture.DestinationTexture);
         }
 
         commandList.SetFramebuffer(_finalOutputTexture.Framebuffer);
         ////commandList.SetFramebuffer(graphicsDevice.SwapchainFramebuffer);
         commandList.ClearColorTarget(0, Color.DarkGray.ToRgbaFloat());
 
-        ////this.FullScreenRenderPass.Draw(commandList, this.FullScreenTexture, this.GraphicsDevice.SwapchainFramebuffer.OutputDescription);
-        this.FullScreenRenderPass.Draw(commandList, this.FullScreenTexture, _finalOutputTexture.Framebuffer.OutputDescription);
+        ////FullScreenRenderPass.Draw(commandList, FullScreenTexture, GraphicsDevice.SwapchainFramebuffer.OutputDescription);
+        _fullScreenRenderPass.Draw(commandList, _fullScreenTexture, _finalOutputTexture.Framebuffer.OutputDescription);
 
         commandList.End();
 
@@ -427,62 +418,62 @@ public class Game : Disposable
         graphicsDevice.WaitForIdle();
 
         //graphicsDevice.SwapBuffers();
-        this.SaveFrame();
+        SaveFrame();
     }
 
     protected virtual void OnResize(Rectangle rectangle)
     {
-        //this.GraphicsDevice.MainSwapchain.Resize((uint)rectangle.Width, (uint)rectangle.Height);
-        this.FullScreenTexture.Resize((uint)rectangle.Width, (uint)rectangle.Height);
-        this._finalOutputTexture.Resize((uint)rectangle.Width, (uint)rectangle.Height);
-        this._cam3D.Resize((uint)rectangle.Width, (uint)rectangle.Height);
+        //GraphicsDevice.MainSwapchain.Resize((uint)rectangle.Width, (uint)rectangle.Height);
+        _fullScreenTexture.Resize((uint)rectangle.Width, (uint)rectangle.Height);
+        _finalOutputTexture.Resize((uint)rectangle.Width, (uint)rectangle.Height);
+        _cam3D.Resize((uint)rectangle.Width, (uint)rectangle.Height);
 
         _stagingTexture?.Dispose();
-        _stagingTexture = GraphicsDevice.ResourceFactory.CreateTexture(TextureDescription.Texture2D(
-            FullScreenTexture.Width,
-            FullScreenTexture.Height,
+        _stagingTexture = _graphicsDevice.ResourceFactory.CreateTexture(TextureDescription.Texture2D(
+            _fullScreenTexture.Width,
+            _fullScreenTexture.Height,
             mipLevels: 1,
             arrayLayers: 1,
-            FullScreenTexture.ColorTexture.Format,
+            _fullScreenTexture.ColorTexture.Format,
             TextureUsage.Staging));
 
+        _dummyWindow.SetSize(rectangle.Width, rectangle.Height);
     }
-
 
     public int GetTargetFps()
     {
-        return (int)(1.0F / this._fixedFrameRate);
+        return (int)(1.0F / _fixedFrameRate);
     }
 
-    public void SetTargetFps(int fps)
+    public void SetTargetFps(float fps)
     {
-        this._fixedFrameRate = 1.0F / fps;
+        _fixedFrameRate = 1.0F / fps;
     }
 
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            this._playerModel.Dispose();
-            this._planeModel.Dispose();
-            this._treeModel.Dispose();
+            _playerModel.Dispose();
+            _planeModel.Dispose();
+            _treeModel.Dispose();
 
             AudioContext.Deinitialize();
             GlobalResource.Destroy();
             Input.Destroy();
-            //this.MainWindow.Dispose();
-            this.GraphicsDevice.Dispose();
+            //MainWindow.Dispose();
+            _graphicsDevice.Dispose();
         }
     }
 
-    public void SaveFrame()
+    private void SaveFrame()
     {
-        GraphicsDevice.WaitForIdle();
+        _graphicsDevice.WaitForIdle();
 
         if (_stagingTexture == null || _stagingTexture.Width != _finalOutputTexture.Width || _stagingTexture.Height != _finalOutputTexture.Height)
         {
             _stagingTexture?.Dispose();
-            _stagingTexture = GraphicsDevice.ResourceFactory.CreateTexture(TextureDescription.Texture2D(
+            _stagingTexture = _graphicsDevice.ResourceFactory.CreateTexture(TextureDescription.Texture2D(
                 _finalOutputTexture.Width,
                 _finalOutputTexture.Height,
                 mipLevels: 1,
@@ -491,18 +482,17 @@ public class Game : Disposable
                 TextureUsage.Staging));
         }
 
-        CommandList.Begin();
-        CommandList.CopyTexture(_finalOutputTexture.ColorTexture, _stagingTexture);
-        CommandList.End();
+        _commandList.Begin();
+        _commandList.CopyTexture(_finalOutputTexture.ColorTexture, _stagingTexture);
+        _commandList.End();
 
-        GraphicsDevice.SubmitCommands(CommandList);
-        GraphicsDevice.WaitForIdle();
+        _graphicsDevice.SubmitCommands(_commandList);
+        _graphicsDevice.WaitForIdle();
 
-        var mapped = GraphicsDevice.Map(_stagingTexture, MapMode.Read);
-
+        MappedResource mapped = _graphicsDevice.Map(_stagingTexture, MapMode.Read);
         if (mapped.Data == IntPtr.Zero)
         {
-            GraphicsDevice.Unmap(_stagingTexture);
+            _graphicsDevice.Unmap(_stagingTexture);
             return;
         }
 
@@ -510,58 +500,31 @@ public class Game : Disposable
         {
             unsafe
             {
-                void* src = mapped.Data.ToPointer();
+                var srcPtr = (byte*)mapped.Data.ToPointer();
+                var dstPtr = (byte*)_skBitmap!.GetPixels().ToPointer();
+                var srcPitch = mapped.RowPitch;
+                var dstPitch = (long)_skBitmap.Width * _skBitmap.BytesPerPixel;
 
-                void* dst = _skBitmap.GetPixels().ToPointer();
-
-                long byteCount = _skBitmap.ByteCount;
-                unsafe
+                for (int y = 0; y < _skBitmap.Height; y++)
                 {
-                    var srcPtr = (byte*)mapped.Data.ToPointer();
-                    var dstPtr = (byte*)_skBitmap.GetPixels().ToPointer();
-                    var srcPitch = mapped.RowPitch;
-                    var dstPitch = _skBitmap.Width * 4;
-
-                    for (int y = 0; y < _skBitmap.Height; y++)
-                    {
-                        var srcOffset = srcPtr + (y * srcPitch);
-                        var dstOffset = dstPtr + (y * dstPitch);
-
-                        Buffer.MemoryCopy(srcOffset, dstOffset, dstPitch, dstPitch);
-                    }
+                    var srcOffset = srcPtr + (y * srcPitch);
+                    var dstOffset = dstPtr + (y * dstPitch);
+                    Buffer.MemoryCopy(srcOffset, dstOffset, dstPitch, dstPitch);
                 }
-
-                Buffer.MemoryCopy(src, dst, byteCount, byteCount);
             }
         }
 
-        // Rilascia la texture mappata.
-        GraphicsDevice.Unmap(_stagingTexture);
-
-        //CommandList.Begin();
-
-        //CommandList.CopyTexture(
-        //    source: FullScreenTexture.ColorTexture,
-        //    destination: _stagingTexture
-        //    );
-
-        //CommandList.End();
-        //GraphicsDevice.SubmitCommands(CommandList);
-        //GraphicsDevice.WaitForIdle();
-
-        //var mapped = GraphicsDevice.Map(_stagingTexture, MapMode.Read);
-        //unsafe
-        //{
-        //    void* src = mapped.Data.ToPointer();
-        //    void* dst = skBitmap.GetPixels().ToPointer();
-
-        //    Buffer.MemoryCopy(src, dst, skBitmap.ByteCount, skBitmap.ByteCount);
-        //}
-        //GraphicsDevice.Unmap(_stagingTexture);
+        _graphicsDevice.Unmap(_stagingTexture);
     }
+
 
     public void ResizeTo(int width, int height)
     {
+        if (_fullScreenTexture.Width == width && _fullScreenTexture.Height == height)
+        {
+            return;
+        }
+
         OnResize(new Rectangle(0, 0, width, height));
 
         lock (_frameLock)
@@ -569,7 +532,6 @@ public class Game : Disposable
             _skBitmap?.Dispose();
             _skBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
         }
-
     }
 
     public void Prepare()
@@ -577,7 +539,7 @@ public class Game : Disposable
         var options = new GraphicsDeviceOptions()
         {
             Debug = false,
-            SyncToVerticalBlank = this.Settings.VSync,
+            SyncToVerticalBlank = _settings.VSync,
             SwapchainDepthFormat = null,
             HasMainSwapchain = false,
             PreferDepthRangeZeroToOne = true,
@@ -586,13 +548,13 @@ public class Game : Disposable
         };
 
         var graphicsDevice = GraphicsDevice.CreateVulkan(options);
-        this.GraphicsDevice = graphicsDevice;
+        _graphicsDevice = graphicsDevice;
 
         Time.Init();
 
-        this.SetTargetFps(this.Settings.TargetFps);
+        SetTargetFps(_settings.TargetFps);
 
-        this.CommandList = graphicsDevice.ResourceFactory.CreateCommandList();
+        _commandList = graphicsDevice.ResourceFactory.CreateCommandList();
 
         GlobalResource.Init(graphicsDevice);
 
@@ -600,7 +562,7 @@ public class Game : Disposable
 
         AudioContext.Initialize(44100, 2);
 
-        this.Init();
+        Init();
     }
 
 

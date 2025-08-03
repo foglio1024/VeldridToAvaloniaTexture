@@ -166,6 +166,7 @@ public class AvaloniaInputContext : IInputContext
             Key.A => KeyboardKey.A,
             Key.S => KeyboardKey.S,
             Key.D => KeyboardKey.D,
+            Key.H => KeyboardKey.H,
             Key.Space => KeyboardKey.Space,
             Key.LeftShift => KeyboardKey.ShiftLeft,
             _ => KeyboardKey.Unknown

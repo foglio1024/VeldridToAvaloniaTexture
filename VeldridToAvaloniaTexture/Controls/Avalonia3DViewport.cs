@@ -12,12 +12,12 @@ namespace VeldridToAvaloniaTexture.Controls;
 /// <summary>
 /// Represents a custom control that integrates with the Veldrid rendering framework.
 /// </summary>
-/// <remarks>The <see cref="VeldridView"/> control is designed to render graphics using the Veldrid rendering
+/// <remarks>The <see cref="Avalonia3DViewport"/> control is designed to render graphics using the Veldrid rendering
 /// framework. It automatically manages rendering resources and updates the display at regular intervals. The control
 /// initializes its renderer when attached to the visual tree and releases resources when detached.  This control
 /// supports dynamic resizing and ensures that the renderer adapts to changes in size. It is suitable for scenarios
 /// requiring high-performance graphics rendering within a UI framework.</remarks>
-public class VeldridView : Control
+public class Avalonia3DViewport : Control
 {
     private readonly DispatcherTimer _timer;
 
@@ -26,7 +26,7 @@ public class VeldridView : Control
     private WriteableBitmap? _writeableBitmap;
 
     public static readonly StyledProperty<float> FrameRateProperty =
-        AvaloniaProperty.Register<VeldridView, float>(nameof(FrameRate), 60f);
+        AvaloniaProperty.Register<Avalonia3DViewport, float>(nameof(FrameRate), 120f);
 
     public float FrameRate
     {
@@ -34,12 +34,12 @@ public class VeldridView : Control
         set => SetValue(FrameRateProperty, value);
     }
 
-    static VeldridView()
+    static Avalonia3DViewport()
     {
-        FrameRateProperty.Changed.AddClassHandler<VeldridView>(HandleFrameRateChanged);
+        FrameRateProperty.Changed.AddClassHandler<Avalonia3DViewport>(HandleFrameRateChanged);
     }
 
-    private static void HandleFrameRateChanged(VeldridView sender, AvaloniaPropertyChangedEventArgs e)
+    private static void HandleFrameRateChanged(Avalonia3DViewport sender, AvaloniaPropertyChangedEventArgs e)
     {
         sender.OnFrameRateChanged();
     }
@@ -47,9 +47,10 @@ public class VeldridView : Control
     private void OnFrameRateChanged()
     {
         _timer.Interval = TimeSpan.FromSeconds(1 / FrameRate);
+        _renderer.SetFrameRate(FrameRate);
     }
 
-    public VeldridView()
+    public Avalonia3DViewport()
     {
         _timer = new DispatcherTimer(
             TimeSpan.FromSeconds(1 / FrameRate),

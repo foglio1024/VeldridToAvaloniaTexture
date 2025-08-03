@@ -20,20 +20,16 @@ public class VeldridRenderer : IDisposable
 
     public VeldridRenderer(int width, int height, Control host)
     {
-        _width = Math.Max(1, width);
-        _height = Math.Max(1, height);
-
         _game = new Game(new GameSettings
         {
-            Width = 800,
-            Height = 600,
+            Width = Math.Max(1, width),
+            Height = Math.Max(1, height),
             Backend = GraphicsBackend.Vulkan,
-            FixedTimeStep = 10,
-            TargetFps = 60,
+            FixedTimeStep = 1,
+            TargetFps = 120,
             VSync = true,
             SampleCount = TextureSampleCount.Count1
         }, host);
-
         _game.Prepare();
     }
 
@@ -46,12 +42,7 @@ public class VeldridRenderer : IDisposable
     /// <param name="height">The new height of the object. Must be a positive integer.</param>
     public void Resize(int width, int height)
     {
-        if (_width == width && _height == height) return;
-
-        _width = width;
-        _height = height;
-
-        _game.ResizeTo(_width, _height);
+        _game.ResizeTo(width, height);
     }
 
     /// <summary>
@@ -90,4 +81,8 @@ public class VeldridRenderer : IDisposable
         _game.Tick();
     }
 
+    public void SetFrameRate(float frameRate)
+    {
+        _game.SetTargetFps(frameRate);
+    }
 }
